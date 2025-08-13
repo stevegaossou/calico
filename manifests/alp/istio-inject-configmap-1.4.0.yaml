@@ -1,9 +1,4 @@
----
-layout: null
----
-
 data:
-{%- raw %}
   config: |-
     policy: enabled
     alwaysInjectSelector:
@@ -353,9 +348,33 @@ data:
           {{ toYaml $value | indent 4 }}
           {{ end }}
           {{- end }}
-{% endraw %}{% include non-helm-manifests/istio-proxy-volume-mounts %}
-{% include non-helm-manifests/dikastes-container %}
-{%- raw %}
+        - mountPath: /var/run/dikastes
+          name: dikastes-sock
+      - name: dikastes
+        image: calico/dikastes:master
+        args: ["server", "-l", "/var/run/dikastes/dikastes.sock", "-d", "/var/run/felix/nodeagent/socket"]
+        securityContext:
+          allowPrivilegeEscalation: false
+        livenessProbe:
+          exec:
+            command:
+            - /healthz
+            - liveness
+          initialDelaySeconds: 3
+          periodSeconds: 3
+        readinessProbe:
+          exec:
+            command:
+            - /healthz
+            - readiness
+          initialDelaySeconds: 3
+          periodSeconds: 3
+        volumeMounts:
+        - mountPath: /var/run/dikastes
+          name: dikastes-sock
+        - mountPath: /var/run/felix
+          name: felix-sync
+
       volumes:
       {{- if (isset .ObjectMeta.Annotations `sidecar.istio.io/bootstrapOverride`) }}
       - name: custom-bootstrap-volume
@@ -403,8 +422,13 @@ data:
           optional: true
           secretName: lightstep.cacert
       {{- end }}
-{% endraw %}{% include non-helm-manifests/istio-volumes %}
-{%- raw %}
+      - name: dikastes-sock
+        emptyDir:
+          medium: Memory
+      - name: felix-sync
+        csi:
+          driver: "csi.tigera.io"
+
       {{- if .Values.global.podDNSSearchNamespaces }}
       dnsConfig:
         searches:
@@ -413,4 +437,3 @@ data:
           {{- end }}
       {{- end }}
     injectedAnnotations:
-{% endraw %}

@@ -1,504 +1,259 @@
-CALICO_DIR=$(shell git rev-parse --show-toplevel)
-VERSIONS_FILE?=$(CALICO_DIR)/_data/versions.yml
-IMAGES_FILE=
-JEKYLL_VERSION=pages
-HP_VERSION=v0.2
-DEV?=false
-CONFIG=--config _config.yml
-ifeq ($(DEV),true)
-	CONFIG:=$(CONFIG),_config_dev.yml
-endif
-ifneq ($(IMAGES_FILE),)
-	CONFIG:=$(CONFIG),/config_images.yml
-endif
+PACKAGE_NAME = github.com/projectcalico/calico
 
-# Set DEV_NULL=true to enable the Null Converter which renders the docs site as markdown. 
-# This is useful for comparing changes to templates & includes.
-ifeq ($(DEV_NULL),true)
-	CONFIG:=$(CONFIG),_config_null.yml
-endif
+include metadata.mk
+include lib.Makefile
 
-GO_BUILD_VER?=v0.22
-CALICO_BUILD?=calico/go-build:$(GO_BUILD_VER)
-LOCAL_USER_ID?=$(shell id -u $$USER)
-PACKAGE_NAME?=github.com/projectcalico/calico
-
-# Determine whether there's a local yaml installed or use dockerized version.
-# Note in order to install local (faster) yaml: "go get github.com/mikefarah/yq.v2"
-YAML_CMD:=$(shell which yq.v2 || echo docker run --rm -i mikefarah/yq:2.4.2 yq)
-
-# Local directories to ignore when running htmlproofer
-HP_IGNORE_LOCAL_DIRS="/v1.5/,/v1.6/,/v2.0/,/v2.1/,/v2.2/,/v2.3/,/v2.4/,/v2.5/,/v2.6/,/v3.0/"
-
-##############################################################################
-# Version information used for cutting a release.
-RELEASE_STREAM := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].title' | grep --only-matching --extended-regexp '(v[0-9]+\.[0-9]+)|master')
-
-# Use := so that these V_ variables are computed only once per make run.
-CALICO_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].title')
-NODE_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].components.calico/node.version')
-CTL_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].components.calicoctl.version')
-CNI_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].components.calico/cni.version')
-KUBE_CONTROLLERS_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].components.calico/kube-controllers.version')
-POD2DAEMON_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].components.flexvol.version')
-DIKASTES_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].components.calico/dikastes.version')
-FLANNEL_MIGRATION_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].components.calico/flannel-migration-controller.version')
-TYPHA_VER := $(shell cat $(VERSIONS_FILE) | $(YAML_CMD) read - '[0].components.typha.version')
-
-##############################################################################
-
-serve: bin/helm
-	# We have to override JEKYLL_DOCKER_TAG which is usually set to 'pages'.
-	# When set to 'pages', jekyll starts in safe mode which means it will not
-	# load any plugins. Since we're no longer running in github-pages, but would
-	# like to use a docker image that comes preloaded with all the github-pages plugins,
-	# its ok to override this variable.
+DOCKER_RUN := mkdir -p ./.go-pkg-cache bin $(GOMOD_CACHE) && \
 	docker run --rm \
-	  -v $$PWD/bin/helm:/usr/local/bin/helm:ro \
-	  -v $$PWD:/srv/jekyll \
-	  -e JEKYLL_DOCKER_TAG="" \
-	  -e JEKYLL_UID=`id -u` \
-	  -p 4000:4000 \
-	  jekyll/jekyll:$(JEKYLL_VERSION) jekyll serve --incremental $(CONFIG)
-
-.PHONY: build
-_site build: bin/helm
-	docker run --rm \
-	-e JEKYLL_DOCKER_TAG="" \
-	-e JEKYLL_UID=`id -u` \
-	-v $$PWD/bin/helm:/usr/local/bin/helm:ro \
-	-v $$PWD:/srv/jekyll \
-	-v $(VERSIONS_FILE):/srv/jekyll/_data/versions.yml \
-	-v $(IMAGES_FILE):/config_images.yml \
-	jekyll/jekyll:$(JEKYLL_VERSION) jekyll build --incremental $(CONFIG)
-
-## Clean enough that a new release build will be clean
-clean:
-	rm -rf _output _site .jekyll-metadata pinned_versions.yaml _includes/charts/*/values.yaml
-
-########################################################################################################################
-# Builds locally checked out code using local versions of libcalico, felix, and confd.
-#
-# Example commands:
-#
-#       # Make a build of your locally checked out code with custom registry.
-#	make dev-clean dev-image REGISTRY=caseydavenport
-#
-#	# Build a set of manifests using the produced images.
-#	make dev-manifests REGISTRY=caseydavenport
-#
-#	# Push the built images.
-#	make dev-push REGISTRY=caseydavenport
-#
-#	# Make a build using a specific tag, e.g. calico/node:mytag-amd64.
-#	make dev-clean dev-image TAG_COMMAND='echo mytag'
-#
-########################################################################################################################
-RELEASE_REPOS=felix typha kube-controllers calicoctl cni-plugin app-policy pod2daemon node
-RELEASE_BRANCH_REPOS=$(sort $(RELEASE_REPOS) libcalico-go confd)
-TAG_COMMAND=git describe --tags --dirty --always --long
-REGISTRY?=calico
-LOCAL_BUILD=true
-.PHONY: dev-image dev-test dev-clean
-## Build a local version of Calico based on the checked out codebase.
-dev-image: $(addsuffix -dev-image, $(filter-out calico felix, $(RELEASE_REPOS)))
-$(addsuffix -dev-image,$(RELEASE_REPOS)): %-dev-image: ../%
-	@cd $< && export TAG=$$($(TAG_COMMAND)); make image tag-images \
-		BUILD_IMAGE=$(REGISTRY)/$* \
-		PUSH_IMAGES=$(REGISTRY)/$* \
-		LOCAL_BUILD=$(LOCAL_BUILD) \
-		IMAGETAG=$$TAG
-
-## Push locally built images.
-dev-push: $(addsuffix -dev-push, $(filter-out calico felix, $(RELEASE_REPOS)))
-$(addsuffix -dev-push,$(RELEASE_REPOS)): %-dev-push: ../%
-	@cd $< && export TAG=$$($(TAG_COMMAND)); make push \
-		BUILD_IMAGE=$(REGISTRY)/$* \
-		PUSH_IMAGES=$(REGISTRY)/$* \
-		LOCAL_BUILD=$(LOCAL_BUILD) \
-		IMAGETAG=$$TAG
-
-## Run all tests against currently checked out code. WARNING: This takes a LONG time.
-dev-test:  $(addsuffix -dev-test, $(filter-out calico, $(RELEASE_REPOS)))
-$(addsuffix -dev-test,$(RELEASE_REPOS)): %-dev-test: ../%
-	@cd $< && make test LOCAL_BUILD=$(LOCAL_BUILD)
-
-## Run `make clean` across all repos.
-dev-clean: $(addsuffix -dev-clean, $(filter-out calico felix, $(RELEASE_REPOS)))
-$(addsuffix -dev-clean,$(RELEASE_REPOS)): %-dev-clean: ../%
-	@cd $< && export TAG=$$($(TAG_COMMAND)); make clean \
-		BUILD_IMAGE=$(REGISTRY)/$* \
-		PUSH_IMAGES=$(REGISTRY)/$* \
-		LOCAL_BUILD=$(LOCAL_BUILD) \
-		IMAGETAG=$$TAG
-
-dev-manifests: dev-versions-yaml dev-images-file
-	@make bin/helm
-	@make clean _site \
-		VERSIONS_FILE="$$PWD/pinned_versions.yml" \
-		IMAGES_FILE="$$PWD/pinned_images.yml" \
-		DEV=true
-	@mkdir -p _output
-	@cp -r _site/master/manifests _output/dev-manifests
-
-# Builds an images file for help in building the docs manifests. We need this in order
-# to override the default images file with the desired registry and image names as
-# produced by the `dev-image` target.
-dev-images-file:
-	@echo "imageNames:" > pinned_images.yml
-	@echo "  node: $(REGISTRY)/node" >> pinned_images.yml
-	@echo "  calicoctl: $(REGISTRY)/calicoctl" >> pinned_images.yml
-	@echo "  typha: $(REGISTRY)/typha" >> pinned_images.yml
-	@echo "  cni: $(REGISTRY)/cni-plugin" >> pinned_images.yml
-	@echo "  kubeControllers: $(REGISTRY)/kube-controllers" >> pinned_images.yml
-	@echo "  calico-upgrade: $(REGISTRY)/upgrade" >> pinned_images.yml
-	@echo "  flannel: quay.io/coreos/flannel" >> pinned_images.yml
-	@echo "  dikastes: $(REGISTRY)/app-policy" >> pinned_images.yml
-	@echo "  pilot-webhook: $(REGISTRY)/pilot-webhook" >> pinned_images.yml
-	@echo "  flexvol: $(REGISTRY)/pod2daemon" >> pinned_images.yml
-
-
-# Builds a versions.yaml file that corresponds to the versions produced by the `dev-image` target.
-dev-versions-yaml:
-	@export TYPHA_VER=`cd ../typha && $(TAG_COMMAND)`-amd64; \
-	export CTL_VER=`cd ../calicoctl && $(TAG_COMMAND)`-amd64; \
-	export NODE_VER=`cd ../node && $(TAG_COMMAND)`-amd64; \
-	export CNI_VER=`cd ../cni-plugin && $(TAG_COMMAND)`-amd64; \
-	export KUBE_CONTROLLERS_VER=`cd ../kube-controllers && $(TAG_COMMAND)`-amd64; \
-	export APP_POLICY_VER=`cd ../app-policy && $(TAG_COMMAND)`-amd64; \
-	export POD2DAEMON_VER=`cd ../pod2daemon && $(TAG_COMMAND)`-amd64; \
-	/bin/echo -e \
-"- title: \"dev-build\"\\n"\
-"  note: \"Developer build\"\\n"\
-"  components:\\n"\
-"     typha:\\n"\
-"      version: $$TYPHA_VER\\n"\
-"     calicoctl:\\n"\
-"      version:  $$CTL_VER\\n"\
-"     calico/node:\\n"\
-"      version:  $$NODE_VER\\n"\
-"     calico/cni:\\n"\
-"      version:  $$CNI_VER\\n"\
-"     calico/kube-controllers:\\n"\
-"      version: $$KUBE_CONTROLLERS_VER\\n"\
-"     networking-calico:\\n"\
-"      version: master\\n"\
-"     flannel:\\n"\
-"      version: v0.11.1\\n"\
-"     calico/dikastes:\\n"\
-"      version: $$APP_POLICY_VER\\n"\
-"     flexvol:\\n"\
-"      version: $$POD2DAEMON_VER\\n" > pinned_versions.yml;
-
-###############################################################################
-# CI / test targets
-###############################################################################
-
-ci: htmlproofer kubeval helm-tests
-
-htmlproofer: _site
-	docker run -ti -e JEKYLL_UID=`id -u` --rm -v $(PWD)/_site:/_site/ quay.io/calico/htmlproofer:$(HP_VERSION) /_site --assume-extension --check-html --empty-alt-ignore --file-ignore $(HP_IGNORE_LOCAL_DIRS) --internal_domains "docs.projectcalico.org" --disable_external --allow-hash-href
-
-kubeval: _site
-	# Run kubeval to check master manifests are valid Kubernetes resources.
-	-docker run -v $$PWD:/calico --entrypoint /bin/sh garethr/kubeval:0.7.3 -c 'ok=true; for f in `find /calico/_site/master -name "*.yaml" |grep -v "\(config\|allow-istio-pilot\|30-policy\|istio-app-layer-policy\|istio-inject-configmap.*\|-cf\).yaml"`; do echo Running kubeval on $$f; /kubeval $$f || ok=false; done; $$ok' 1>stderr.out 2>&1
-
-	# Filter out error loading schema for non-standard resources.
-	# Filter out error reading empty secrets (which we use for e.g. etcd secrets and seem to work).
-	-grep -v "Could not read schema from HTTP, response status is 404 Not Found" stderr.out | grep -v "invalid Secret" > filtered.out
-
-	# Display the errors with context and fail if there were any.
-	-rm stderr.out
-	! grep -C3 -P "invalid|\t\*" filtered.out
-	rm filtered.out
-
-helm-tests: vendor bin/helm values.yaml
-	mkdir -p .go-pkg-cache && \
-		docker run --rm \
 		--net=host \
-		-v $$(pwd):/go/src/$(PACKAGE_NAME):rw \
-		-v $$(pwd)/.go-pkg-cache:/go/pkg:rw \
-		-v $$(pwd)/bin/helm:/usr/local/bin/helm \
+		--init \
+		$(EXTRA_DOCKER_ARGS) \
 		-e LOCAL_USER_ID=$(LOCAL_USER_ID) \
-		-w /go/src/$(PACKAGE_NAME) \
-		$(CALICO_BUILD) ginkgo -cover -r -skipPackage vendor ./helm-tests -chart-path=./_includes/$(RELEASE_STREAM)/charts/calico $(GINKGO_ARGS)
+		-e GOCACHE=/go-cache \
+		$(GOARCH_FLAGS) \
+		-e GOPATH=/go \
+		-e OS=$(BUILDOS) \
+		-e GOOS=$(BUILDOS) \
+		-e GOFLAGS=$(GOFLAGS) \
+		-v $(CURDIR):/go/src/github.com/projectcalico/calico:rw \
+		-v $(CURDIR)/.go-pkg-cache:/go-cache:rw \
+		-w /go/src/$(PACKAGE_NAME)
 
-###############################################################################
-# Docs automation
-###############################################################################
-
-# URLs to ignore when checking external links.
-HP_IGNORE_URLS=/docs.openshift.org/
-
-check_external_links: _site
-	docker run -ti -e JEKYLL_UID=`id -u` --rm -v $(PWD)/_site:/_site/ quay.io/calico/htmlproofer:$(HP_VERSION) /_site --external_only --file-ignore $(HP_IGNORE_LOCAL_DIRS) --assume-extension --url-ignore $(HP_IGNORE_URLS) --internal_domains "docs.projectcalico.org"
-
-strip_redirects:
-	find \( -name '*.md' -o -name '*.html' \) -exec sed -i'' '/redirect_from:/d' '{}' \;
-
-add_redirects_for_latest: strip_redirects
-ifndef VERSION
-	$(error VERSION is undefined - run using make add_redirects_for_latest VERSION=vX.Y)
+.PHONY: update-file-copyrights
+update-file-copyrights:
+ifndef BASE_BRANCH
+	$(error BASE_BRANCH is not defined. Please set BASE_BRANCH to the target branch (e.g., 'main'))
 endif
-	# Check that the VERSION directory already exists
-	@test -d $(VERSION)
+	# Update outdated copyrights for updated files.
+	YEAR=$$(date +%Y); git diff --diff-filter=d --name-only $(BASE_BRANCH) | xargs sed -i "/Copyright (c) $$YEAR Tigera/!s/Copyright (c) \([0-9]\{4\}\)\(-[0-9]\{4\}\)\{0,1\} Tigera/Copyright (c) \1-$$YEAR Tigera/"
+	# Add copyright to new files that don't have it.
+	YEAR=$$(date +%Y); \
+	git diff --name-only --diff-filter=A $(BASE_BRANCH) | grep '\.go$$' | \
+	xargs -I {} sh -c 'if ! grep -q "Copyright (c)" "{}"; then sed "s/YEAR/'$$YEAR'/g" hack/copyright.template | (cat -; echo; cat "{}") > temp && mv temp "{}"; fi'
 
-	# Add the redirect line - look at .md files only and add "redirect_from: XYZ" on a new line after each "title:"
-	find $(VERSION) \( -name '*.md' -o -name '*.html' \) -exec sed -i 's#^title:.*#&\nredirect_from: {}#' '{}' \;
+clean:
+	$(MAKE) -C api clean
+	$(MAKE) -C apiserver clean
+	$(MAKE) -C app-policy clean
+	$(MAKE) -C calicoctl clean
+	$(MAKE) -C cni-plugin clean
+	$(MAKE) -C confd clean
+	$(MAKE) -C felix clean
+	$(MAKE) -C kube-controllers clean
+	$(MAKE) -C libcalico-go clean
+	$(MAKE) -C node clean
+	$(MAKE) -C pod2daemon clean
+	$(MAKE) -C key-cert-provisioner clean
+	$(MAKE) -C typha clean
+	$(MAKE) -C release clean
+	rm -rf ./bin
 
-	# Check the redirect_from lines and update the version to be "latest"
-	find $(VERSION) \( -name '*.md' -o -name '*.html' \) -exec sed -i 's#^\(redirect_from: \)$(VERSION)#\1latest#' '{}' \;
+ci-preflight-checks:
+	$(MAKE) check-go-mod
+	$(MAKE) verify-go-mods
+	$(MAKE) check-dockerfiles
+	$(MAKE) check-language
+	$(MAKE) generate
+	$(MAKE) fix-all
+	$(MAKE) check-ocp-no-crds
+	$(MAKE) yaml-lint
+	$(MAKE) check-dirty
+	$(MAKE) go-vet
 
-	# Check the redirect_from lines and strip the .md from the URL
-	find $(VERSION) \( -name '*.md' -o -name '*.html' \) -exec sed -i 's#^\(redirect_from:.*\)\.md#\1#' '{}' \;
+check-go-mod:
+	$(DOCKER_GO_BUILD) ./hack/check-go-mod.sh
 
-update_canonical_urls:
-	# Looks through all directories and replaces previous latest release version numbers in canonical URLs with new
-	python release-scripts/update-canonical-urls.py
+go-vet:
+	# Go vet will check that libbpf headers can be found; make sure they're available.
+	$(MAKE) -C felix clone-libbpf
+	$(DOCKER_GO_BUILD) go vet ./...
+
+check-dockerfiles:
+	./hack/check-dockerfiles.sh
+
+check-images-availability: bin/crane bin/yq
+	cd ./hack && ./check-images-availability.sh
+
+check-language:
+	./hack/check-language.sh
+
+check-ocp-no-crds:
+	@echo "Checking for files in manifests/ocp with CustomResourceDefinitions"
+	@CRD_FILES_IN_OCP_DIR=$$(grep "^kind: CustomResourceDefinition" manifests/ocp/* -l || true); if [ ! -z "$$CRD_FILES_IN_OCP_DIR" ]; then echo "ERROR: manifests/ocp should not have any CustomResourceDefinitions, these files should be removed:"; echo "$$CRD_FILES_IN_OCP_DIR"; exit 1; fi
+
+yaml-lint:
+	@docker run --rm $$(tty -s && echo "-it" || echo) -v $(PWD):/data cytopia/yamllint:latest .
+
+protobuf:
+	$(MAKE) -C app-policy protobuf
+	$(MAKE) -C cni-plugin protobuf
+	$(MAKE) -C felix protobuf
+	$(MAKE) -C pod2daemon protobuf
+	$(MAKE) -C goldmane protobuf
+
+generate:
+	$(MAKE) gen-semaphore-yaml
+	$(MAKE) protobuf
+	$(MAKE) -C lib gen-files
+	$(MAKE) -C api gen-files
+	$(MAKE) -C libcalico-go gen-files
+	$(MAKE) -C felix gen-files
+	$(MAKE) -C goldmane gen-files
+	$(MAKE) gen-manifests
+	$(MAKE) fix-changed
+
+gen-manifests: bin/helm bin/yq
+	cd ./manifests && \
+		OPERATOR_VERSION=$(OPERATOR_VERSION) \
+		CALICO_VERSION=$(CALICO_VERSION) \
+		./generate.sh
+
+# Get operator CRDs from the operator repo, OPERATOR_BRANCH must be set
+get-operator-crds: var-require-all-OPERATOR_BRANCH
+	@echo ================================================================
+	@echo === Pulling new operator CRDs from branch $(OPERATOR_BRANCH) ===
+	@echo ================================================================
+	cd ./charts/tigera-operator/crds/ && \
+	for file in operator.tigera.io_*.yaml; do echo "downloading $$file from operator repo" && curl -fsSL https://raw.githubusercontent.com/tigera/operator/$(OPERATOR_BRANCH)/pkg/crds/operator/$${file} -o $${file}; done
+	$(MAKE) fix-changed
+
+gen-semaphore-yaml:
+	cd .semaphore && ./generate-semaphore-yaml.sh
+
+# Build the tigera-operator helm chart.
+chart: bin/tigera-operator-$(GIT_VERSION).tgz
+bin/tigera-operator-$(GIT_VERSION).tgz: bin/helm $(shell find ./charts/tigera-operator -type f)
+	bin/helm package ./charts/tigera-operator \
+	--destination ./bin/ \
+	--version $(GIT_VERSION) \
+	--app-version $(GIT_VERSION)
+
+# Build all Calico images for the current architecture.
+image:
+	$(MAKE) -C pod2daemon image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
+	$(MAKE) -C key-cert-provisioner image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
+	$(MAKE) -C calicoctl image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
+	$(MAKE) -C cni-plugin image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
+	$(MAKE) -C apiserver image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
+	$(MAKE) -C kube-controllers image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
+	$(MAKE) -C app-policy image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
+	$(MAKE) -C typha image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
+	$(MAKE) -C node image IMAGETAG=$(GIT_VERSION) VALIDARCHES=$(ARCH)
 
 ###############################################################################
-# Release targets
+# Run local e2e smoke test against the checked-out code
+# using a local kind cluster.
 ###############################################################################
+E2E_FOCUS ?= "sig-network.*Conformance|sig-calico.*Conformance"
+ADMINPOLICY_SUPPORTED_FEATURES ?= "AdminNetworkPolicy,BaselineAdminNetworkPolicy"
+ADMINPOLICY_UNSUPPORTED_FEATURES ?= ""
+e2e-test:
+	$(MAKE) -C e2e build
+	$(MAKE) -C node kind-k8st-setup
+	KUBECONFIG=$(KIND_KUBECONFIG) ./e2e/bin/k8s/e2e.test -ginkgo.focus=$(E2E_FOCUS)
+	KUBECONFIG=$(KIND_KUBECONFIG) ./e2e/bin/adminpolicy/e2e.test \
+	  -exempt-features=$(ADMINPOLICY_UNSUPPORTED_FEATURES) \
+	  -supported-features=$(ADMINPOLICY_SUPPORTED_FEATURES)
 
-## Tags and builds a release from start to finish.
-release: release-prereqs
-	$(MAKE) release-tag
-	$(MAKE) release-build
-	$(MAKE) release-verify
+e2e-test-adminpolicy:
+	$(MAKE) -C e2e build
+	$(MAKE) -C node kind-k8st-setup
+	KUBECONFIG=$(KIND_KUBECONFIG) ./e2e/bin/adminpolicy/e2e.test \
+	  -exempt-features=$(ADMINPOLICY_UNSUPPORTED_FEATURES) \
+	  -supported-features=$(ADMINPOLICY_SUPPORTED_FEATURES)
 
-	@echo ""
-	@echo "Release build complete. Next, push the release."
-	@echo ""
-	@echo "  make release-publish"
-	@echo ""
+###############################################################################
+# Release logic below
+###############################################################################
+.PHONY: release release-publish create-release-branch release-test build-openstack publish-openstack release-notes
+# Build the release tool.
+release/bin/release: $(shell find ./release -type f -name '*.go')
+	$(MAKE) -C release
 
-## Produces a git tag for the release.
-release-tag: release-prereqs
-	git tag $(CALICO_VER)
+# Install ghr for publishing to github.
+bin/ghr:
+	$(DOCKER_RUN) -e GOBIN=/go/src/$(PACKAGE_NAME)/bin/ $(CALICO_BUILD) go install github.com/tcnksm/ghr@$(GHR_VERSION)
 
-## Produces a clean build of release artifacts at the specified version.
-release-build: release-prereqs clean
-	# Create the release archive.
-	$(MAKE) release-archive
+# Install GitHub CLI
+bin/gh:
+	curl -sSL -o bin/gh.tgz https://github.com/cli/cli/releases/download/v$(GITHUB_CLI_VERSION)/gh_$(GITHUB_CLI_VERSION)_linux_amd64.tar.gz
+	tar -zxvf bin/gh.tgz -C bin/ gh_$(GITHUB_CLI_VERSION)_linux_amd64/bin/gh --strip-components=2
+	chmod +x $@
+	rm bin/gh.tgz
 
-## Verifies the release artifacts produces by `make release-build` are correct.
-release-verify: release-prereqs
-	@echo "TODO: Implement release tar verification"
+# Build a release.
+release: release/bin/release
+	@release/bin/release release build
 
-ifneq (,$(findstring $(RELEASE_STREAM),v3.5 v3.4 v3.3 v3.2 v3.1 v3.0 v2.6))
-    # Found: this is an older release.
-    REL_NOTES_PATH:=releases
-else
-    # Not found: this is a newer release.
-    REL_NOTES_PATH:=release-notes
-endif
+# Publish an already built release.
+release-publish: release/bin/release bin/ghr
+	@release/bin/release release publish
 
-## Pushes a github release and release artifacts produced by `make release-build`.
-release-publish: release-prereqs
-	# Push the git tag.
-	git push origin $(CALICO_VER)
+release-public: bin/gh release/bin/release
+	@release/bin/release release public
 
-	# Push binaries to GitHub release.
-	# Requires ghr: https://github.com/tcnksm/ghr
-	# Requires GITHUB_TOKEN environment variable set.
-	ghr -u projectcalico -r calico \
-		-b 'Release notes can be found at https://docs.projectcalico.org/$(RELEASE_STREAM)/$(REL_NOTES_PATH)/' \
-		-n $(CALICO_VER) \
-		$(CALICO_VER) $(RELEASE_DIR).tgz
+# Create a release branch.
+create-release-branch: release/bin/release
+	@release/bin/release branch cut -git-publish
 
-	@echo "Verify the GitHub release based on the pushed tag."
-	@echo ""
-	@echo "  https://github.com/projectcalico/calico/releases/tag/$(CALICO_VER)"
-	@echo ""
+# Test the release code
+release-test:
+	$(DOCKER_RUN) $(CALICO_BUILD) ginkgo -cover -r release/pkg
+
+# Currently our openstack builds either build *or* build and publish,
+# hence why we have two separate jobs here that do almost the same thing.
+build-openstack: bin/yq
+	$(eval VERSION=$(shell bin/yq '.version' charts/calico/values.yaml))
+	$(info Building openstack packages for version $(VERSION))
+	$(MAKE) -C release/packaging release VERSION=$(VERSION)
+
+publish-openstack: bin/yq
+	$(eval VERSION=$(shell bin/yq '.version' charts/calico/values.yaml))
+	$(info Publishing openstack packages for version $(VERSION))
+	$(MAKE) -C release/packaging release-publish VERSION=$(VERSION)
+
+## Kicks semaphore job which syncs github released helm charts with helm index file
+.PHONY: helm-index
+helm-index:
+	@echo "Triggering semaphore workflow to update helm index."
+	SEMAPHORE_PROJECT_ID=30f84ab3-1ea9-4fb0-8459-e877491f3dea \
+			     SEMAPHORE_WORKFLOW_BRANCH=master \
+			     SEMAPHORE_WORKFLOW_FILE=../releases/calico/helmindex/update_helm.yml \
+			     $(MAKE) semaphore-run-workflow
+
+# Creates the tar file used for installing Calico on OpenShift.
+bin/ocp.tgz: manifests/ocp/ bin/yq
+	tar czvf $@ --exclude='.gitattributes' -C manifests/ ocp
 
 ## Generates release notes for the given version.
-release-notes: #release-prereqs
-	VERSION=$(CALICO_VER) GITHUB_TOKEN=$(GITHUB_TOKEN) python2 ./release-scripts/generate-release-notes.py
+.PHONY: release-notes
+release-notes:
+	@$(MAKE) -C release release-notes
 
+## Update the AUTHORS.md file.
 update-authors:
 ifndef GITHUB_TOKEN
 	$(error GITHUB_TOKEN must be set)
 endif
 	@echo "# Calico authors" > AUTHORS.md
 	@echo "" >> AUTHORS.md
-	@echo "This file is auto-generated based on contribution records reported" >> AUTHORS.md
-	@echo "by GitHub for the core repositories within the projectcalico/ organization. It is ordered alphabetically." >> AUTHORS.md
+	@echo "This file is auto-generated based on commit records reported" >> AUTHORS.md
+	@echo "by git for the projectcalico/calico repository. It is ordered alphabetically." >> AUTHORS.md
 	@echo "" >> AUTHORS.md
-	@docker run -ti --rm -v $(PWD):/code -e GITHUB_TOKEN=$(GITHUB_TOKEN) python:3 \
-		bash -c 'pip install pygithub && /usr/local/bin/python /code/release-scripts/get-contributors.py >> /code/AUTHORS.md'
+	@docker run -ti --rm --net=host \
+		-v $(REPO_ROOT):/code \
+		-w /code \
+		-e GITHUB_TOKEN=$(GITHUB_TOKEN) \
+		python:3 \
+		bash -c '/usr/local/bin/python release/get-contributors.py >> /code/AUTHORS.md'
 
-# release-prereqs checks that the environment is configured properly to create a release.
-release-prereqs:
-	@if [ $(CALICO_VER) != $(NODE_VER) ]; then \
-		echo "Expected CALICO_VER $(CALICO_VER) to equal NODE_VER $(NODE_VER)"; \
-		exit 1; fi
-ifeq (, $(shell which ghr))
-	$(error Unable to find `ghr` in PATH, run this: go get -u github.com/tcnksm/ghr)
-endif
-
-OUTPUT_DIR?=_output
-RELEASE_DIR_NAME?=release-$(CALICO_VER)
-RELEASE_DIR?=$(OUTPUT_DIR)/$(RELEASE_DIR_NAME)
-RELEASE_DIR_K8S_MANIFESTS?=$(RELEASE_DIR)/k8s-manifests
-RELEASE_DIR_IMAGES?=$(RELEASE_DIR)/images
-RELEASE_DIR_BIN?=$(RELEASE_DIR)/bin
-
-# Determine where the manifests live. For older versions we used
-# a different location, but we still need to package them up for patch
-# releases.
-DEFAULT_MANIFEST_SRC=./_site/manifests
-OLD_VERSIONS := v3.0 v3.1 v3.2 v3.3 v3.4 v3.5 v3.6
-ifneq ($(filter $(RELEASE_STREAM),$(OLD_VERSIONS)),)
-DEFAULT_MANIFEST_SRC=./_site/$(RELEASE_STREAM)/getting-started/kubernetes/installation
-endif
-MANIFEST_SRC?=$(DEFAULT_MANIFEST_SRC)
-
-## Create an archive that contains a complete "Calico" release
-release-archive: release-prereqs $(RELEASE_DIR).tgz
-
-$(RELEASE_DIR).tgz: $(RELEASE_DIR) $(RELEASE_DIR_K8S_MANIFESTS) $(RELEASE_DIR_IMAGES) $(RELEASE_DIR_BIN) $(RELEASE_DIR)/README
-	tar -czvf $(RELEASE_DIR).tgz -C $(OUTPUT_DIR) $(RELEASE_DIR_NAME)
-
-$(RELEASE_DIR_IMAGES): $(RELEASE_DIR_IMAGES)/calico-node.tar $(RELEASE_DIR_IMAGES)/calico-typha.tar $(RELEASE_DIR_IMAGES)/calico-cni.tar $(RELEASE_DIR_IMAGES)/calico-kube-controllers.tar $(RELEASE_DIR_IMAGES)/calico-pod2daemon-flexvol.tar $(RELEASE_DIR_IMAGES)/calico-dikastes.tar $(RELEASE_DIR_IMAGES)/calico-flannel-migration-controller.tar
-
-
-$(RELEASE_DIR_BIN): $(RELEASE_DIR_BIN)/calicoctl $(RELEASE_DIR_BIN)/calicoctl-windows-amd64.exe $(RELEASE_DIR_BIN)/calicoctl-darwin-amd64
-
-$(RELEASE_DIR)/README:
-	@echo "This directory contains a complete release of Calico $(CALICO_VER)" >> $@
-	@echo "Documentation for this release can be found at http://docs.projectcalico.org/$(RELEASE_STREAM)" >> $@
-	@echo "" >> $@
-	@echo "Docker images (under 'images'). Load them with 'docker load'" >> $@
-	@echo "* The calico/node docker image  (version $(NODE_VERS))" >> $@
-	@echo "* The calico/typha docker image  (version $(TYPHA_VER))" >> $@
-	@echo "* The calico/cni docker image  (version $(CNI_VERS))" >> $@
-	@echo "* The calico/kube-controllers docker image (version $(KUBE_CONTROLLERS_VER))" >> $@
-	@echo "* The calico/dikastes docker image (version $(DIKASTES_VER))" >> $@
-	@echo "* The calico/pod2daemon-flexvol docker image (version $(POD2DAEMON_VER))" >> $@
-	@echo "* The calico/flannel-migration-controller docker image (version $(FLANNEL_MIGRATION_VER))" >> $@
-	@echo "" >> $@
-	@echo "Binaries (for amd64) (under 'bin')" >> $@
-	@echo "* The calicoctl binary (for Linux) (version $(CTL_VER))" >> $@
-	@echo "* The calicoctl-windows-amd64.exe binary (for Windows) (version $(CTL_VER))" >> $@
-	@echo "* The calicoctl-darwin-amd64 binary (for Mac) (version $(CTL_VER))" >> $@
-	@echo "" >> $@
-	@echo "Kubernetes manifests (under 'k8s-manifests directory')" >> $@
-
-$(RELEASE_DIR):
-	mkdir -p $(RELEASE_DIR)
-
-$(RELEASE_DIR_K8S_MANIFESTS):
-	# Ensure that the docs site is generated
-	rm -rf ../_site
-	$(MAKE) _site
-
-	# Find all the hosted manifests and copy them into the release dir. Use xargs to mkdir the destination directory structure before copying them.
-	# -printf "%P\n" prints the file name and directory structure with the search dir stripped off
-	find $(MANIFEST_SRC) -name  '*.yaml' -printf "%P\n" | \
-	  xargs -I FILE sh -c \
-	    'mkdir -p $(RELEASE_DIR_K8S_MANIFESTS)/`dirname FILE`;\
-	    cp $(MANIFEST_SRC)/FILE $(RELEASE_DIR_K8S_MANIFESTS)/`dirname FILE`;'
-
-$(RELEASE_DIR_IMAGES)/calico-node.tar:
-	mkdir -p $(RELEASE_DIR_IMAGES)
-	docker pull calico/node:$(NODE_VER)
-	docker save --output $@ calico/node:$(NODE_VER)
-
-$(RELEASE_DIR_IMAGES)/calico-typha.tar:
-	mkdir -p $(RELEASE_DIR_IMAGES)
-	docker pull calico/typha:$(TYPHA_VER)
-	docker save --output $@ calico/typha:$(TYPHA_VER)
-
-$(RELEASE_DIR_IMAGES)/calico-cni.tar:
-	mkdir -p $(RELEASE_DIR_IMAGES)
-	docker pull calico/cni:$(CNI_VER)
-	docker save --output $@ calico/cni:$(CNI_VER)
-
-$(RELEASE_DIR_IMAGES)/calico-kube-controllers.tar:
-	mkdir -p $(RELEASE_DIR_IMAGES)
-	docker pull calico/kube-controllers:$(KUBE_CONTROLLERS_VER)
-	docker save --output $@ calico/kube-controllers:$(KUBE_CONTROLLERS_VER)
-
-$(RELEASE_DIR_IMAGES)/calico-pod2daemon-flexvol.tar:
-	mkdir -p $(RELEASE_DIR_IMAGES)
-	docker pull calico/pod2daemon-flexvol:$(POD2DAEMON_VER)
-	docker save --output $@ calico/pod2daemon-flexvol:$(POD2DAEMON_VER)
-
-$(RELEASE_DIR_IMAGES)/calico-dikastes.tar:
-	mkdir -p $(RELEASE_DIR_IMAGES)
-	docker pull calico/dikastes:$(DIKASTES_VER)
-	docker save --output $@ calico/dikastes:$(DIKASTES_VER)
-
-$(RELEASE_DIR_IMAGES)/calico-flannel-migration-controller.tar:
-	mkdir -p $(RELEASE_DIR_IMAGES)
-	docker pull calico/flannel-migration-controller:$(FLANNEL_MIGRATION_VER)
-	docker save --output $@ calico/flannel-migration-controller:$(FLANNEL_MIGRATION_VER)
-
-$(RELEASE_DIR_BIN)/%:
-	mkdir -p $(RELEASE_DIR_BIN)
-	wget https://github.com/projectcalico/calicoctl/releases/download/$(CTL_VER)/$(@F) -O $@
-	chmod +x $@
+update-pins: update-go-build-pin update-calico-base-pin
 
 ###############################################################################
-# Utilities
+# Post-release validation
 ###############################################################################
-HELM_RELEASE=helm-v2.16.3-linux-amd64.tar.gz
-bin/helm:
-	mkdir -p bin
-	$(eval TMP := $(shell mktemp -d))
-	wget -q https://storage.googleapis.com/kubernetes-helm/$(HELM_RELEASE) -O $(TMP)/$(HELM_RELEASE)
-	tar -zxvf $(TMP)/$(HELM_RELEASE) -C $(TMP)
-	mv $(TMP)/linux-amd64/helm bin/helm
+bin/gotestsum:
+	@GOBIN=$(REPO_ROOT)/bin go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
 
-.PHONY: values.yaml
-values.yaml: _includes/charts/calico/values.yaml _includes/charts/tigera-operator/values.yaml
-_includes/charts/%/values.yaml: _plugins/values.rb _plugins/helm.rb _data/versions.yml
-	docker run --rm \
-	  -v $$PWD:/calico \
-	  -w /calico \
-	  ruby:2.5 ruby ./hack/gen_values_yml.rb --chart $* > $@
-
-## Create the vendor directory
-vendor: glide.yaml
-	# Ensure that the glide cache directory exists.
-	mkdir -p $(HOME)/.glide
-
-	docker run --rm -i \
-	  -v $(CURDIR):/go/src/$(PACKAGE_NAME):rw \
-	  -v $(HOME)/.glide:/home/user/.glide:rw \
-	  -e LOCAL_USER_ID=$(LOCAL_USER_ID) \
-	  -w /go/src/$(PACKAGE_NAME) \
-	  $(CALICO_BUILD) glide install -strip-vendor
-
-.PHONY: help
-## Display this help text
-help: # Some kind of magic from https://gist.github.com/rcmachado/af3db315e31383502660
-	$(info Available targets)
-	@awk '/^[a-zA-Z\-\_0-9\/]+:/ {                                      \
-		nb = sub( /^## /, "", helpMsg );                                \
-		if(nb == 0) {                                                   \
-			helpMsg = $$0;                                              \
-			nb = sub( /^[^:]*:.* ## /, "", helpMsg );                   \
-		}                                                               \
-		if (nb)                                                         \
-			printf "\033[1;31m%-" width "s\033[0m %s\n", $$1, helpMsg;  \
-	}                                                                   \
-	{ helpMsg = $$0 }'                                                  \
-	width=20                                                            \
-	$(MAKEFILE_LIST)
-
-DOCS_TEST_CONTAINER=projectcalico/release-test
-.PHONY: release-test-image
-release-test-image:
-	cd release-scripts/tests && docker build -t $(DOCS_TEST_CONTAINER) . && cd -
-
-.PHONY: release-test
-release-test: release-test-image
-	docker run --rm \
-	-v $(PWD):/docs \
-	-e RELEASE_STREAM=$(RELEASE_STREAM) \
-	$(DOCS_TEST_CONTAINER) sh -c \
-	"nosetests . -e "$(EXCLUDE_REGEX)" \
-	-s -v --with-xunit \
-	--xunit-file='/docs/nosetests.xml' \
-	--with-timer $(EXTRA_NOSE_ARGS)"
+postrelease-checks: release/bin/release bin/gotestsum
+	@release/bin/release release validate

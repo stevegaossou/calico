@@ -1,59 +1,83 @@
-[![Slack Status](https://slack.projectcalico.org/badge.svg)](https://slack.projectcalico.org)
-[![IRC Channel](https://img.shields.io/badge/irc-%23calico-blue.svg)](https://kiwiirc.com/client/irc.freenode.net/#calico)
-[![Docker Pulls](https://img.shields.io/docker/pulls/calico/node.svg)](https://hub.docker.com/r/calico/node/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/projectcalico/calico)](https://goreportcard.com/report/github.com/projectcalico/calico)
+[![ArtifactHub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/tigera-operator)](https://artifacthub.io/packages/helm/projectcalico/tigera-operator)
+[![License](https://img.shields.io/badge/license-Apache-blue.svg)](calico/LICENSE)
+[![GoPkg](https://pkg.go.dev/badge/k8s.io/kubernetes.svg)](https://pkg.go.dev/github.com/projectcalico/api)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/6064/badge)](https://bestpractices.coreinfrastructure.org/projects/6064)
 
-# Calico
-<img src="http://docs.projectcalico.org/images/felix.png" width="100" height="100">
+<div align=center>
+<h1>Calico</h1>
+<h2>
+<a href="https://projectcalico.docs.tigera.io/getting-started/kubernetes/quickstart">Quickstart</a> |
+<a href="https://projectcalico.docs.tigera.io">Docs</a> |
+<a href="CONTRIBUTING.md">Contribute</a> |
+<a href="https://slack.projectcalico.org">Slack</a> |
+<a href="https://github.com/projectcalico/calico/releases">Releases</a>
+</h2>
+</div>
 
-Calico is an open source networking and network security solution for containers, virtual machines, and bare-metal workloads.
-Calico uses standard Linux networking tools to provide two major services for Cloud Native applications:
+## 🐾 Welcome to Project Calico!
 
-- Network connectivity between workloads.
-- Network security policy enforcement between workloads.
+Project Calico, created and maintained by [Tigera][tigera], is an open-source project with an active development and user community. Calico Open Source has grown to be the most widely adopted solution for container networking and security, powering 8M+ nodes daily across 166 countries.
 
-Calico’s flexible architecture supports a wide range of deployment options, using modular components, including:
+## 🌟 Why use Calico?
 
-- [CNI](https://github.com/projectcalico/cni-plugin) plugins for Kubernetes to provide highly efficient pod networking and IP
-  Address Management (IPAM).
-- A [Neutron ML2](https://github.com/projectcalico/networking-calico) plugin to provide VM networking for OpenStack.
-- A policy engine, [Felix](https://github.com/projectcalico/felix), to provide enforcement of the full set of Kubernetes
-  network policy features, plus for those needing a richer set of policy features, Calico network policies.
-- Both non-overlay and [overlay (via IPIP or VXLAN)](https://docs.projectcalico.org/networking/vxlan-ipip) networking options
-  in either public cloud or on-prem deployments.
-- A [BGP routing stack](https://docs.projectcalico.org/networking/bgp) that can advertise routes for workload and service IP
-  addresses to physical network infrastructure such as Top of Rack routers (ToRs).
-- A simple command line interface, [calicoctl](https://github.com/projectcalico/calicoctl), for managing Calico configuration
-and Calico network policies.
+- **Data Plane Choice**: eBPF, standard Linux, Windows, and VPP — versatility in network solutions.
+- **Interoperability**: Works across multiple distros, multiple clouds, bare metal, and VMs.
+- **Optimized Performance**: Engineered for high speed and low CPU usage, maximizing your cluster investments.
+- **Scalable Architecture**: Grows seamlessly with your Kubernetes clusters without sacrificing performance.
+- **Advanced Security**: Get granular access controls and WireGuard encryption.
+- **Kubernetes Networking Policy Support**: Continually defining excellence in Kubernetes network policy standards and support.
+- **Vibrant Contributor Community**: Over 200 contributors from a wide array of global companies.
+- **Flexible networking**: An array of networking tools at your disposal, including BGP, VXLAN, service advertisement, and more.
 
-## Getting Started Running Calico
+<div align=center>
+<img src="https://www.tigera.io/app/uploads/2024/02/Ecosystem_shrunken_2023.svg">
+</div>
 
-There are many avenues to get started with Calico depending on your situation.
+## 🤝 Join the Calico Community
 
-- Trying out Kubernetes on a single host or on your own hardware? The
-  [Quick Start Guide](https://docs.projectcalico.org/getting-started/kubernetes/quickstart) will have you up and running in
-  about fifteen minutes.
-- Running a managed public cloud? Use our
-  [guides for enabling Calico Network Policies](https://docs.projectcalico.org/getting-started/kubernetes/managed-public-cloud/).
-- Want to go deeper? Visit [https://docs.projectcalico.org](https://docs.projectcalico.org) for full documentation.
+- [Calico Big Cats][big-cats]: Become an ambassador and share your journey
+- [Community Meetings][community-meetings]: Engage and contribute
+- [Contribute on GitHub][first-issues]: Start with 'good first issues'
+- [Connect on Slack][slack]: Join the conversation with fellow contributors and our developers
 
-## Getting Started Developing Calico
+## 💡 Contributing to Project Calico
 
-Calico is an open source project, and welcomes your contribution, be it through code, a bug report, a feature request, or user
-feedback.
+- [Get Started with Project Calico][get-started]
+- [Repositories][repos]
+- [Contribute to our docs][docs-contrib]
+- Documentation: [Dive into our training and resources][resources]
+- [Make Calico better][issues]
 
-- [The Contribution Guidelines](CONTRIBUTING_CODE.md) document will get you started on submitting changes to the project.
-- [The Developer Guide](DEVELOPER_GUIDE.md) will walk you through how to set up a development environment, build the code,
-  and run tests.
-- [The Calico Documentation Guide](CONTRIBUTING_DOCS.md) will get you started on making changes to
-  [https://docs.projectcalico.org](https://docs.projectcalico.org).
+## 🛠️ Projects We Maintain
 
-## Join the Calico Community!
+- [Calico Golang API][api]
+- [Calico operator][operator]
+- [VPP dataplane][vpp]
+- [Calico BIRD][bird]
 
-The Calico community is committed to fostering an open and welcoming environment, with several ways to engage with other users
-and developers. You can find out more about our monthly meetings, Slack group, and Discourse by visiting our
-[Community Repository](https://github.com/projectcalico/community).
+## 📢 Stay Connected
 
-## License
+- Subscribe: [Join our newsletter][news]
+- [YouTube channel for updates & tutorials][youtube]
+- [Technical Blog][blog]
+- [Careers][join]: Passionate about open source? Join our team.
 
-Calico is available under the Apache 2.0 license. See the [LICENSE](LICENSE) file for details.
-
+[tigera]: https://www.tigera.io/
+[big-cats]: https://www.tigera.io/project-calico/calico-big-cats-ambassador-program/#meet-calico-big-cats
+[community-meetings]: https://calendar.google.com/calendar/u/0/embed?src=tigera.io_uunmavdev5ndovf0hc4frtl0i0@group.calendar.google.com
+[first-issues]: https://github.com/projectcalico/calico/labels/good%20first%20issue
+[slack]: https://slack.projectcalico.org/
+[get-started]: https://docs.tigera.io/calico/latest/about
+[repos]: https://github.com/orgs/projectcalico/repositories
+[docs-contrib]: https://github.com/projectcalico/calico/blob/master/CONTRIBUTING_DOCS.md
+[resources]: https://docs.tigera.io/calico/latest/about/training-resources
+[issues]: https://github.com/projectcalico/calico/issues
+[api]: https://github.com/projectcalico/api
+[operator]: https://github.com/tigera/operator
+[vpp]: https://github.com/projectcalico/vpp-dataplane
+[news]: https://www.tigera.io/project-calico/#:~:text=Join%20Calico%20Open%20Source%20community%20newsletter
+[youtube]: https://www.youtube.com/channel/UCFpTnXDNcBoXI4gqCDmegFA
+[blog]: https://www.tigera.io/blog/?_sft_category=technical-blog
+[join]: https://www.tigera.io/careers/
+[bird]: https://github.com/projectcalico/bird
